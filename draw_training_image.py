@@ -15,9 +15,12 @@ def draw_chart(csv_path, output_dir, labeling_ma=5, window=60):
     print("Max: {:.2f}, Min:{:.2f}".format(df['Price'].max(), df['Price'].min()))
     print("Date: {}".format(len(df)))
     print("Scaler: {:.2f}".format(scaler))
-    total_ret = psar_backtesting(df)
+    backtesting_ret = psar_backtesting2(df, use_ma=False)
+    total_ret = backtesting_ret['Total_return']
+    open_ret = backtesting_ret['Total_return'] * backtesting_ret['Is_long']
+    close_ret = backtesting_ret['Total_return'] * (~backtesting_ret['Is_long'])
 
-    for i in range(labeling_ma, len(df) - window - labeling_ma):
+    for i in range(0, len(df) - window - labeling_ma):
         # Draw Candle Stick
         fig = plt.figure(figsize=(10, 10))
         ax = fig.add_subplot(1, 1, 1)
@@ -35,10 +38,16 @@ def draw_chart(csv_path, output_dir, labeling_ma=5, window=60):
 
         # Draw Return
         target_df = df.loc[df.index[i]: df.index[i + window], :]
-        ret = total_ret.loc[total_ret.index[i]: total_ret.index[i + window]]
+        # ret = total_ret.loc[total_ret.index[i]: total_ret.index[i + window]]
+        o_ret = open_ret.loc[df.index[i]: df.index[i+window]]
+        c_ret = close_ret.loc[df.index[i]: df.index[i+window]]
         ax2 = ax.twinx()
         ax2.set_ylim(total_ret.min()*99/100, total_ret.max())
-        ax2.bar(np.arange(len(target_df.index)), ret, alpha=0.3)
+        ax2.bar(np.arange(len(target_df.index)), o_ret, color='r', alpha=0.3)
+        ax2.bar(np.arange(len(target_df.index)), c_ret, color='b', alpha=0.3)
+        ax.set_xlabel('Date')
+        ax.set_ylabel('Price($)')
+        ax2.set_ylabel('Cumulative Return')
 
         # Set x-axis as Date
         _xticks = list()
@@ -67,9 +76,9 @@ def draw_chart(csv_path, output_dir, labeling_ma=5, window=60):
         output_name = str(i) + '_' + tag + '.png'
         output_path = os.path.join(output_dir, output_name)
 
-        print("Printing {}th image".format(i - labeling_ma + 1))
+        print("Printing {}th image".format(i + 1))
         # plt.show()
-        fig.savefig(output_path)
+        # fig.savefig(output_path)
         plt.close(fig)
 
 
@@ -83,7 +92,7 @@ def is_psar_bull(h, l, psar):
         raise
 
 
-def psar_backtesting(barsdata):
+def psar_backtesting(barsdata, use_ma=False):
     initial_af = 0.02
     max_af = 0.2
     psar_dict = get_psar(barsdata)
@@ -92,7 +101,18 @@ def psar_backtesting(barsdata):
     barsdata['Is_bull'] = barsdata.apply(lambda x: is_psar_bull(x['High'], x['Low'], x['Psar']), axis=1)
     barsdata['Return'] = 1.0
 
-    for i in range(60, len(barsdata)):
+    barsdata.loc[barsdata.index[0:60], 'Is_bull'] = False
+    bull_index = barsdata['Is_bull']
+    barsdata.loc[bull_index, 'Return'] = \
+        barsdata.shift(periods=-1).loc[bull_index, 'Price'] / barsdata.loc[bull_index, 'Price']
+    barsdata['Total_return'] = barsdata['Return'].cumprod()
+
+    # Future MA
+    labeling_ma = 20
+    window = 60
+    scaler = (barsdata['Price'].max() - barsdata['Price'].min()) / len(barsdata)
+
+    for i in range(0, len(barsdata) - labeling_ma - window):
         prev_row_index = barsdata.index[i-1]
         row_index = barsdata.index[i]
         prev_status = barsdata.loc[prev_row_index, 'Is_bull']
@@ -100,15 +120,86 @@ def psar_backtesting(barsdata):
         bull = True
         bear = False
 
+        future_ma = barsdata.loc[barsdata.index[i + window]:barsdata.index[i + window + labeling_ma], 'Price'].mean()
+        ma = barsdata.loc[barsdata.index[i + window - labeling_ma]: barsdata.index[i+window], 'Price'].mean()
+        ma_gradient = (future_ma - ma)/labeling_ma
+        ma_gradient / scaler
+        ma_gradient = round(ma_gradient, 2)
+
+        if use_ma:
+            bull_index = barsdata['Is_bull']
+            barsdata.loc[bull_index, 'Return'] = \
+                barsdata.shift(periods=-1).loc[bull_index, 'Price'] / barsdata.loc[bull_index, 'Price']
+
+        else:
+            ma_condition = True
+        # ma_condition = True
+
         if prev_status == bull:
-            # print(barsdata.loc[prev_row_index, 'Return'] * barsdata.loc[row_index, 'Price'] / barsdata.loc[row_index, 'Price'])
-            barsdata.loc[row_index, 'Return'] = \
-                barsdata.loc[prev_row_index, 'Return'] * barsdata.loc[row_index, 'Price'] / barsdata.loc[prev_row_index, 'Price']
+            barsdata.loc[row_index, 'Return'] = barsdata.loc[prev_row_index, 'Return'] * \
+                                                barsdata.loc[row_index, 'Price'] / barsdata.loc[prev_row_index, 'Price']
+
         if prev_status == bear:
-            # print(barsdata.loc[prev_row_index, 'Return'] * barsdata.loc[row_index, 'Price'] / barsdata.loc[row_index, 'Price'])
             barsdata.loc[row_index, 'Return'] = barsdata.loc[prev_row_index, 'Return']
 
     return barsdata['Return']
+
+
+def psar_backtesting2(barsdata, use_ma=False):
+    initial_af = 0.02
+    max_af = 0.2
+    psar_dict = get_psar(barsdata)
+    barsdata['Psar'] = psar_dict['Psar']
+    # barsdata['Psar'] = get_psar(barsdata, initial_af=initial_af, max_af=max_af)['Psar']
+    barsdata['Is_bull'] = barsdata.apply(lambda x: is_psar_bull(x['High'], x['Low'], x['Psar']), axis=1)
+
+    barsdata.loc[barsdata.index[0:60], 'Is_bull'] = False
+
+    # Future MA
+    labeling_ma = 20
+    window = 60
+    scaler = (barsdata['Price'].max() - barsdata['Price'].min()) / len(barsdata)
+
+    if use_ma:
+        barsdata['MA_gradient'] = 0
+        t = 0.5
+
+        for i in range(0, len(barsdata) - labeling_ma - window):
+            prev_row_index = barsdata.index[i-1]
+            row_index = barsdata.index[i]
+            prev_status = barsdata.loc[prev_row_index, 'Is_bull']
+            status = barsdata.loc[row_index, 'Is_bull']
+            bull = True
+            bear = False
+
+            future_ma = barsdata.loc[barsdata.index[i + window]:barsdata.index[i + window + labeling_ma], 'Price'].mean()
+            ma = barsdata.loc[barsdata.index[i + window - labeling_ma]: barsdata.index[i+window], 'Price'].mean()
+            ma_gradient = (future_ma - ma)/labeling_ma
+            ma_gradient / scaler
+            ma_gradient = round(ma_gradient, 2)
+            barsdata.loc[barsdata.index[i+window], 'MA_gradient'] = ma_gradient
+
+        barsdata['MA_con'] = np.NaN
+        bull_str_idx = (barsdata['Is_bull'] == True) * (barsdata['Is_bull'].shift(1) == False)
+        barsdata.loc[bull_str_idx * (barsdata['MA_gradient'] > t), 'MA_con'] = True
+        barsdata.loc[bull_str_idx * (barsdata['MA_gradient'] <= t), 'MA_con'] = False
+        barsdata['MA_con'] = barsdata['MA_con'].fillna(method='ffill')
+        barsdata['MA_con'] = barsdata['MA_con'].fillna(False)
+        barsdata['Is_long'] = barsdata['Is_bull'] * barsdata['MA_con']
+
+        long_pos_idx = barsdata['Is_long']
+
+    else:
+        barsdata['Is_long'] = barsdata['Is_bull'].shift(1)
+        barsdata['Is_long'] = barsdata['Is_long'].fillna(False)
+        long_pos_idx = barsdata['Is_long']
+
+    barsdata['Return'] = 1.0
+    barsdata.loc[long_pos_idx, 'Return'] = \
+        barsdata.shift(periods=-1).loc[long_pos_idx, 'Price'] / barsdata.loc[long_pos_idx, 'Price']
+    barsdata['Total_return'] = barsdata['Return'].cumprod()
+
+    return barsdata
 
 
 def get_psar(barsdata, initial_af=0.02, max_af=0.2):
@@ -179,7 +270,7 @@ def get_psar(barsdata, initial_af=0.02, max_af=0.2):
 if __name__ == '__main__':
     root_path = r'C:\Users\USER\workspace\KSIF\Chart_Trading'
     data_dir = 'data'
-    output_dir = 'Future_ma20_Labeling_scaling_psar'
+    output_dir = 'Future_ma20_Labeling_scaling_psar_ma'
     csv_path = os.path.join(root_path, data_dir, 'TSLA Historical Data.csv')
     output_dir_path = os.path.join(root_path, output_dir)
 

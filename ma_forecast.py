@@ -72,7 +72,7 @@ def main():
 
 def test():
     # Load test data
-    dir_path = r'C:\Users\USER\workspace\KSIF\Chart_Trading\Future_ma20_Labeling_scaling\test'
+    dir_path = r'C:\Users\USER\workspace\KSIF\Chart_Trading\Future_ma20_Labeling_scaling\test2'
     file_list = [x for x in os.listdir(dir_path) if x.endswith('.png')]
     # file_list = sorted(file_list)
     gradient_list = [float(os.path.splitext(x)[0].split('_')[1]) for x in file_list]
