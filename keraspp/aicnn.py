@@ -44,7 +44,6 @@ class CNN(Model):
         # TODO: Error. Needs to debugging.
         # model.cl_part = Model(x, z_cl)
         # model.fl_part = Model(x, z_fl)
-
         model.x, model.y = x, y
 
     def compile(model):
@@ -191,7 +190,7 @@ class Machine():
 
         return history
 
-    def run(self, epochs=100, batch_size=128, verbose=1):
+    def run(self, epochs=100, batch_size=128, verbose=1, model_name='output_'):
         data = self.data
         model = self.model
         fig = self.fig
@@ -210,8 +209,10 @@ class Machine():
         print('Test accuracy:', score[1])
 
         # Save result
-        suffix = sfile.unique_filename('datatime')
-        foldname = 'output_' + suffix
+        import datetime
+        # suffix = sfile.unique_filename('datatime')
+        suffix = datetime.datetime.now().strftime('%yy%mm%dd%H%M')
+        foldname = os.path.join('model', model_name + '_' + suffix)
         os.makedirs(foldname)
         skeras.save_history_history(
             'history_history.npy', history.history, fold=foldname)

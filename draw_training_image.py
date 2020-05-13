@@ -8,6 +8,84 @@ import matplotlib.ticker as ticker
 import datetime
 
 
+class Drawer:
+    def __init__(self):
+        self.fig = plt.figure(figsize=(10, 10))
+        self.ax = self.fig.add_subplot(1, 1, 1)
+        self.ax.xaxis.set_major_locator(ticker.MaxNLocator(10))
+
+    def draw_chart(self, df, coordinate=True, ohlc=True, psar=False, cum_return=False):
+        # Use Coordinate or not
+        if coordinate:
+            self.set_axis(df.index.values)
+        else:
+            self.ax.axis('off')
+
+        # Draw OHLC Candle Chart
+        if ohlc:
+            self.draw_ohlc(df)
+
+        # Draw PSAR Points
+        if psar:
+            self.draw_psar(df)
+
+        # Draw Total Return
+        if cum_return:
+            pass
+
+    def set_axis(self, df_index_values):
+        self.ax.axis('on')
+        # Set x-axis as Date
+        _xticks = list()
+        _xlabels = list()
+        _wd_prev = 0
+        _close = list()
+        for _x, d in zip(np.arange(len(df_index_values)), df_index_values):
+            weekday = datetime.datetime.strptime(str(d).split('T')[0], '%Y-%m-%d').weekday()
+            if weekday <= _wd_prev:
+                _xticks.append(_x)
+                _xlabels.append(datetime.datetime.strptime(str(d).split('T')[0], '%Y-%m-%d').strftime('%y/%m/%d'))
+            _wd_prev = weekday
+        self.ax.set_xticks(_xticks)
+        self.ax.set_xticklabels(_xlabels, rotation=45, minor=False)
+        self.ax.set_xlabel('Date')
+        self.ax.set_ylabel('Price($)')
+
+    def draw_ohlc(self, df):
+        candle_width = 0.5
+        uc = 'r'
+        dc = 'b'
+
+        o = df['Open']
+        h = df['High']
+        l = df['Low']
+        c = df['Price']
+        candlestick2_ohlc(self.ax, o, h, l, c,
+                          width=candle_width, colorup=uc, colordown=dc)
+
+    def draw_psar(self, df):
+        if 'Psar' not in df.columns:
+            raise KeyError
+        psar = df['Psar']
+        self.ax.plot(np.arange(len(df)), psar, linestyle='', marker='*')
+
+    def draw_returns(self, df, ret_lim=None):
+        if ret_lim is None:
+            ret_lim = (df['Total_return'].min(), df['Total_return'].max())
+        o_ret = df['Total_return'] * df['Is_long']
+        c_ret = df['Total_return'] * (~df['Is_long'])
+
+        self.ax2 = self.ax.twinx()
+        self.ax2.set_ylim(ret_lim[0] * 99 / 100, ret_lim[1])
+        self.ax2.bar(np.arange(len(df.index)), o_ret, color='r', alpha=0.2)
+        self.ax2.bar(np.arange(len(df.index)), c_ret, color='b', alpha=0.2)
+        self.ax2.set_ylabel('Cumulative Return')
+
+    def save_img(self, output_path):
+        self.fig.savefig(output_path)
+        plt.close(self.fig)
+
+
 def draw_chart(csv_path, output_dir, labeling_ma=5, window=60):
     df = pd.read_csv(csv_path, index_col='Date', parse_dates=['Date'])
     df = df.sort_index(ascending=True)
@@ -15,8 +93,15 @@ def draw_chart(csv_path, output_dir, labeling_ma=5, window=60):
     print("Max: {:.2f}, Min:{:.2f}".format(df['Price'].max(), df['Price'].min()))
     print("Date: {}".format(len(df)))
     print("Scaler: {:.2f}".format(scaler))
-    backtesting_ret = psar_backtesting2(df, use_ma=False)
+    backtesting_ret = psar_backtesting2(df, use_ma=True)
     total_ret = backtesting_ret['Total_return']
+
+    # Sharpe
+    r = backtesting_ret['Return']
+    sharpe = (r.mean() ** 252 - 1.02) / (r.std() * np.sqrt(252))
+    print("Sharpe Ratio: {:.2f}".format(sharpe))
+    print("Total Return: {:.2f}".format(total_ret[-1]))
+
     open_ret = backtesting_ret['Total_return'] * backtesting_ret['Is_long']
     close_ret = backtesting_ret['Total_return'] * (~backtesting_ret['Is_long'])
 
@@ -30,6 +115,7 @@ def draw_chart(csv_path, output_dir, labeling_ma=5, window=60):
         candlestick2_ohlc(ax, target_df['Open'], target_df['High'], target_df['Low'], target_df['Price'],
                           width=0.5, colorup='r', colordown='b')
 
+        # """
         # Draw PSAR
         psar_dict = get_psar(target_df)
         psar = psar_dict['Psar']
@@ -37,7 +123,6 @@ def draw_chart(csv_path, output_dir, labeling_ma=5, window=60):
         ax.plot(np.arange(len(target_df.index)), psar, linestyle='', marker='*')
 
         # Draw Return
-        target_df = df.loc[df.index[i]: df.index[i + window], :]
         # ret = total_ret.loc[total_ret.index[i]: total_ret.index[i + window]]
         o_ret = open_ret.loc[df.index[i]: df.index[i+window]]
         c_ret = close_ret.loc[df.index[i]: df.index[i+window]]
@@ -62,6 +147,7 @@ def draw_chart(csv_path, output_dir, labeling_ma=5, window=60):
             _wd_prev = weekday
         ax.set_xticks(_xticks)
         ax.set_xticklabels(_xlabels, rotation=45, minor=False)
+        # """
 
         # Tagging the name of Candle Chart with MA Gradient
         # close_now = df.loc[df.index[i + window], 'Price']
@@ -69,16 +155,22 @@ def draw_chart(csv_path, output_dir, labeling_ma=5, window=60):
         # ma_gradient = round((close_future - close_now) / labeling_ma, 2)
         future_ma = df.loc[df.index[i + window]:df.index[i + window + labeling_ma], 'Price'].mean()
         ma = df.loc[df.index[i + window - labeling_ma]: df.index[i+window], 'Price'].mean()
+
+        # Calculate Gradient
+        """
         ma_gradient = (future_ma - ma)/labeling_ma
         ma_gradient / scaler
+        """
+        ma_gradient = (future_ma - ma) / (target_df['Price'].max() - target_df['Price'].min())
         ma_gradient = round(ma_gradient, 2)
         tag = str(ma_gradient)
-        output_name = str(i) + '_' + tag + '.png'
+        # output_name = str(i) + '_' + tag + '.png'
+        output_name = '_'.join([str(i), str(window), str(labeling_ma), tag]) + '.png'
         output_path = os.path.join(output_dir, output_name)
 
         print("Printing {}th image".format(i + 1))
         # plt.show()
-        # fig.savefig(output_path)
+        fig.savefig(output_path)
         plt.close(fig)
 
 
@@ -156,13 +248,13 @@ def psar_backtesting2(barsdata, use_ma=False):
     barsdata.loc[barsdata.index[0:60], 'Is_bull'] = False
 
     # Future MA
-    labeling_ma = 20
+    labeling_ma = 10
     window = 60
     scaler = (barsdata['Price'].max() - barsdata['Price'].min()) / len(barsdata)
 
     if use_ma:
         barsdata['MA_gradient'] = 0
-        t = 0.5
+        t = 0.2
 
         for i in range(0, len(barsdata) - labeling_ma - window):
             prev_row_index = barsdata.index[i-1]
@@ -174,8 +266,15 @@ def psar_backtesting2(barsdata, use_ma=False):
 
             future_ma = barsdata.loc[barsdata.index[i + window]:barsdata.index[i + window + labeling_ma], 'Price'].mean()
             ma = barsdata.loc[barsdata.index[i + window - labeling_ma]: barsdata.index[i+window], 'Price'].mean()
+            # Calculate Gradient
+            ma_gradient = (future_ma - ma)/(barsdata.loc[barsdata.index[i]: barsdata.index[i + window], 'Price'].max()
+             - barsdata.loc[barsdata.index[i]: barsdata.index[i+window], 'Price'].min())
+            ma_gradient = round(ma_gradient, 2)
+
+            """
             ma_gradient = (future_ma - ma)/labeling_ma
             ma_gradient / scaler
+            """
             ma_gradient = round(ma_gradient, 2)
             barsdata.loc[barsdata.index[i+window], 'MA_gradient'] = ma_gradient
 
@@ -270,8 +369,55 @@ def get_psar(barsdata, initial_af=0.02, max_af=0.2):
 if __name__ == '__main__':
     root_path = r'C:\Users\USER\workspace\KSIF\Chart_Trading'
     data_dir = 'data'
-    output_dir = 'Future_ma20_Labeling_scaling_psar_ma'
-    csv_path = os.path.join(root_path, data_dir, 'TSLA Historical Data.csv')
+    output_dir = 'Qualcomm_Chart_Test'
+    csv_path = os.path.join(root_path, data_dir, 'QCOM Historical Data.csv')
+    output_dir_path = os.path.join(root_path, output_dir)
+
+    if not os.path.exists(output_dir_path):
+        os.makedirs(output_dir_path)
+
+    from chart_drawer import Drawer
+    df = pd.read_csv(csv_path, index_col='Date', parse_dates=['Date'])
+    df = df.sort_index(ascending=True)
+
+    df = psar_backtesting2(df, use_ma=True)
+
+    window = 60
+    labeling_ma = 10
+    ret_lim = (df['Total_return'].min(), df['Total_return'].max())
+
+    for i in range(0, len(df) - window - labeling_ma):
+        target_df = df.loc[df.index[i]: df.index[i + window], :]
+
+        # Calculate Gradient
+        future_ma = df.loc[df.index[i + window]:df.index[i + window + labeling_ma], 'Price'].mean()
+        ma = df.loc[df.index[i + window - labeling_ma]: df.index[i + window], 'Price'].mean()
+
+        """
+        ma_gradient = (future_ma - ma)/labeling_ma
+        ma_gradient / scaler
+        """
+        ma_gradient = (future_ma - ma) / (target_df['Price'].max() - target_df['Price'].min())
+        ma_gradient = round(ma_gradient, 2)
+        tag = str(ma_gradient)
+        # output_name = str(i) + '_' + tag + '.png'
+        output_name = '_'.join([str(i), str(window), str(labeling_ma), tag]) + '.png'
+        output_path = os.path.join(output_dir, output_name)
+
+        drawer = Drawer()
+        drawer.draw_chart(target_df, coordinate=True, ohlc=True, psar=True, cum_return=True, ret_lim=ret_lim)
+        drawer.save_img(output_path)
+        print("{}th image".format(i))
+
+
+if __name__ == '__main_':
+    root_path = r'C:\Users\USER\workspace\KSIF\Chart_Trading'
+    data_dir = 'data'
+    # output_dir = 'Future_ma20_Labeling_scaling_psar_ma'
+    # output_dir = 'TSLA_Chart_BT'
+    output_dir = 'Qualcomm_Chart_BT_10_60_0.2'
+    # csv_path = os.path.join(root_path, data_dir, 'TSLA Historical Data.csv')
+    csv_path = os.path.join(root_path, data_dir, 'QCOM Historical Data.csv')
     output_dir_path = os.path.join(root_path, output_dir)
 
     if not os.path.exists(output_dir_path):
